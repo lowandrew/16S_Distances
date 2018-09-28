@@ -2,6 +2,7 @@
 
 import os
 import argparse
+import multiprocessing
 from Bio import SeqIO, pairwise2
 
 
@@ -28,6 +29,10 @@ def main():
                         type=str,
                         required=True,
                         help='Name of desired output directory. Created if it does not exist.')
+    parser.add_argument('-t', '--threads',
+                        type=int,
+                        default=multiprocessing.cpu_count(),
+                        help='Number of threads to run. Defaults to all cores on machine.')
     args = parser.parse_args()
     if not os.path.isdir(args.output_dir):
         os.makedirs(args.output_dir)
@@ -42,23 +47,36 @@ def main():
                    silva_fasta=args.silva_fasta,
                    output_dir=args.output_dir)
 
+    sequence_one_seqs = extract_sequences(os.path.join(args.output_dir, args.group_one + '.fasta'))
+    sequence_two_seqs = extract_sequences(os.path.join(args.output_dir, args.group_two + '.fasta'))
+
+    sequences_to_compare = list()
+    for sequence_one in sequence_one_seqs:
+        for sequence_two in sequence_two_seqs:
+            sequences_to_compare.append([str(sequence_one), str(sequence_two)])
+
+    p = multiprocessing.Pool(processes=args.threads)
+    identities = p.map(find_percent_identities, sequences_to_compare)
+    p.close()
+    p.join()
     # Now do pairwise alignments between each sequence in group one and each sequence in group two.
     # This will allow for us to know the percent ID distribution of everything.
-    identities = find_percent_identities(fasta_one=os.path.join(args.output_dir, args.group_one + '.fasta'),
-                                         fasta_two=os.path.join(args.output_dir, args.group_two + '.fasta'))
     print('Average percent ID ' + str(sum(identities)/len(identities)))
 
 
-def find_percent_identities(fasta_one, fasta_two):
+def extract_sequences(fasta_file):
+    sequences = list()
+    for sequence in SeqIO.parse(fasta_file, 'fasta'):
+        sequences.append(sequence.seq)
+    return sequences
+
+
+def find_percent_identities(sequences):
     # Modified from https://www.biostars.org/p/208540/
-    percent_identities = list()
-    for sequence_one in SeqIO.parse(fasta_one, 'fasta'):
-        for sequence_two in SeqIO.parse(fasta_two, 'fasta'):
-            alignment = pairwise2.align.globalxx(sequence_one.seq, sequence_two.seq, score_only=True)
-            seq_length = max(len(sequence_one.seq), len(sequence_two.seq))
-            percent_id = (alignment/seq_length) * 100
-            percent_identities.append(percent_id)
-    return percent_identities
+    alignment = pairwise2.align.globalxx(sequences[0], sequences[1], score_only=True)
+    seq_length = max(len(sequences[0]), len(sequences[1]))
+    percent_id = (alignment/seq_length) * 100
+    return percent_id
 
 
 def extract_fastas(taxonomy_level, group, silva_fasta, output_dir):
