@@ -2,7 +2,7 @@
 
 import os
 import argparse
-from Bio import SeqIO
+from Bio import SeqIO, pairwise2
 
 
 def main():
@@ -31,6 +31,8 @@ def main():
     args = parser.parse_args()
     if not os.path.isdir(args.output_dir):
         os.makedirs(args.output_dir)
+
+    # Extract the fasta sequences for each of the two groups of interest.
     extract_fastas(taxonomy_level=args.taxonomy_level,
                    group=args.group_one,
                    silva_fasta=args.silva_fasta,
@@ -39,6 +41,24 @@ def main():
                    group=args.group_two,
                    silva_fasta=args.silva_fasta,
                    output_dir=args.output_dir)
+
+    # Now do pairwise alignments between each sequence in group one and each sequence in group two.
+    # This will allow for us to know the percent ID distribution of everything.
+    identities = find_percent_identities(fasta_one=os.path.join(args.output_dir, args.group_one + '.fasta'),
+                                         fasta_two=os.path.join(args.output_dir, args.group_two + '.fasta'))
+    print('Average percent ID ' + str(sum(identities)/len(identities)))
+
+
+def find_percent_identities(fasta_one, fasta_two):
+    # Modified from https://www.biostars.org/p/208540/
+    percent_identities = list()
+    for sequence_one in SeqIO.parse(fasta_one, 'fasta'):
+        for sequence_two in SeqIO.parse(fasta_two, 'fasta'):
+            alignment = pairwise2.align.globalxx(sequence_one.seq, sequence_two.seq, score_only=True)
+            seq_length = max(len(sequence_one.seq), len(sequence_two.seq))
+            percent_id = (alignment/seq_length) * 100
+            percent_identities.append(percent_id)
+    return percent_identities
 
 
 def extract_fastas(taxonomy_level, group, silva_fasta, output_dir):
