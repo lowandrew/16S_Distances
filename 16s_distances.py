@@ -4,6 +4,9 @@ import os
 import argparse
 import multiprocessing
 from Bio import SeqIO, pairwise2
+from Bio.Blast.Applications import NcbiblastnCommandline
+from Bio.Blast import NCBIXML
+from io import StringIO
 
 
 def main():
@@ -47,7 +50,21 @@ def main():
                    silva_fasta=args.silva_fasta,
                    output_dir=args.output_dir)
 
+    make_blast_db(os.path.join(args.output_dir, args.group_two + '.fasta'))
     sequence_one_seqs = extract_sequences(os.path.join(args.output_dir, args.group_one + '.fasta'))
+    count = 1
+    p = multiprocessing.Pool(processes=args.threads)
+    database_list = [os.path.join(args.output_dir, args.group_two + '.fasta')] * len(sequence_one_seqs)
+    percent_ids = p.starmap(blast_sequence, zip(sequence_one_seqs, database_list))
+    p.close()
+    p.join()
+    # for sequence in sequence_one_seqs:
+    #     print('Blasting {} of {}'.format(count, len(sequence_one_seqs)))
+    #     percent_ids = blast_sequence(sequence, database=os.path.join(args.output_dir, args.group_two + '.fasta'))
+    #     print(len(percent_ids))
+    #     count += 1
+
+    """
     sequence_two_seqs = extract_sequences(os.path.join(args.output_dir, args.group_two + '.fasta'))
 
     sequences_to_compare = list()
@@ -61,22 +78,46 @@ def main():
     p.join()
     # Now do pairwise alignments between each sequence in group one and each sequence in group two.
     # This will allow for us to know the percent ID distribution of everything.
+    # TODO: Write these result to file or something, so they can be visualized a bit later on.
+    with open(os.path.join(args.output_dir, 'distances.csv'), 'a+') as f:
+        f.write('{},{},{}\n'.format(args.group_one, args.group_two, str(sum(identities)/len(identities))))
     print('Average percent ID ' + str(sum(identities)/len(identities)))
+    """
+
+
+def make_blast_db(fasta_file):
+    cmd = 'makeblastdb -in {} -dbtype nucl'.format(fasta_file)
+    os.system(cmd)
 
 
 def extract_sequences(fasta_file):
     sequences = list()
     for sequence in SeqIO.parse(fasta_file, 'fasta'):
-        sequences.append(sequence.seq)
+        sequences.append(str(sequence.seq))
     return sequences
 
 
 def find_percent_identities(sequences):
     # Modified from https://www.biostars.org/p/208540/
+    # As it turns out, doing pairwise alignments in python is painfully slow, so this would end up taking
+    # months to complete for an all-vs-all run of stuff. Will attempt some blast
     alignment = pairwise2.align.globalxx(sequences[0], sequences[1], score_only=True)
     seq_length = max(len(sequences[0]), len(sequences[1]))
     percent_id = (alignment/seq_length) * 100
     return percent_id
+
+
+def blast_sequence(sequence, database):
+    blastn = NcbiblastnCommandline(db=database, outfmt=5, max_target_seqs=100000)
+    stdout, stderr = blastn(stdin=sequence)
+    percent_identities = list()
+    if stdout:
+        for record in NCBIXML.parse(StringIO(stdout)):
+            for alignment in record.alignments:
+                for hsp in alignment.hsps:
+                    if hsp.align_length >= 0.9 * len(sequence):
+                        percent_identities.append(100 * hsp.identities/len(sequence))
+    return percent_identities
 
 
 def extract_fastas(taxonomy_level, group, silva_fasta, output_dir):
