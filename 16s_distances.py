@@ -52,12 +52,18 @@ def main():
 
     make_blast_db(os.path.join(args.output_dir, args.group_two + '.fasta'))
     sequence_one_seqs = extract_sequences(os.path.join(args.output_dir, args.group_one + '.fasta'))
-    count = 1
     p = multiprocessing.Pool(processes=args.threads)
     database_list = [os.path.join(args.output_dir, args.group_two + '.fasta')] * len(sequence_one_seqs)
     percent_ids = p.starmap(blast_sequence, zip(sequence_one_seqs, database_list))
     p.close()
     p.join()
+    percent_id_all = list()
+    for percent_id_list in percent_ids:
+        for pid in percent_id_list:
+            percent_id_all.append(pid)
+    print(sum(percent_id_all)/len(percent_id_all))
+    with open(os.path.join(args.output_dir, 'distances.csv'), 'a+') as f:
+        f.write('{},{},{}\n'.format(args.group_one, args.group_two, str(sum(percent_id_all)/len(percent_id_all))))
     # for sequence in sequence_one_seqs:
     #     print('Blasting {} of {}'.format(count, len(sequence_one_seqs)))
     #     percent_ids = blast_sequence(sequence, database=os.path.join(args.output_dir, args.group_two + '.fasta'))
@@ -108,7 +114,7 @@ def find_percent_identities(sequences):
 
 
 def blast_sequence(sequence, database):
-    blastn = NcbiblastnCommandline(db=database, outfmt=5, max_target_seqs=100000)
+    blastn = NcbiblastnCommandline(db=database, outfmt=5, max_target_seqs=100000)  # By default, only get top 500 matches. Change to ridiculous level
     stdout, stderr = blastn(stdin=sequence)
     percent_identities = list()
     if stdout:
