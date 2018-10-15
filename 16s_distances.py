@@ -54,41 +54,19 @@ def main():
     sequence_one_seqs = extract_sequences(os.path.join(args.output_dir, args.group_one + '.fasta'))
     p = multiprocessing.Pool(processes=args.threads)
     database_list = [os.path.join(args.output_dir, args.group_two + '.fasta')] * len(sequence_one_seqs)
-    percent_ids = p.starmap(blast_sequence, zip(sequence_one_seqs, database_list))
+    blast_results = p.starmap(blast_sequence, zip(sequence_one_seqs, database_list))
     p.close()
     p.join()
     percent_id_all = list()
-    for percent_id_list in percent_ids:
-        for pid in percent_id_list:
-            percent_id_all.append(pid)
+    with open(os.path.join(args.output_dir, args.group_one + '_' + args.group_two + '_detail.csv'), 'w') as f:
+        f.write('QuerySequence,SubjectSequence,PercentID\n')
+        for blast_result_list in blast_results:
+            for blast_result in blast_result_list:
+                percent_id_all.append(blast_result.percent_id)
+                f.write('{},{},{}\n'.format(blast_result.query_name, blast_result.subject_name, blast_result.percent_id))
     print(sum(percent_id_all)/len(percent_id_all))
     with open(os.path.join(args.output_dir, 'distances.csv'), 'a+') as f:
         f.write('{},{},{}\n'.format(args.group_one, args.group_two, str(sum(percent_id_all)/len(percent_id_all))))
-    # for sequence in sequence_one_seqs:
-    #     print('Blasting {} of {}'.format(count, len(sequence_one_seqs)))
-    #     percent_ids = blast_sequence(sequence, database=os.path.join(args.output_dir, args.group_two + '.fasta'))
-    #     print(len(percent_ids))
-    #     count += 1
-
-    """
-    sequence_two_seqs = extract_sequences(os.path.join(args.output_dir, args.group_two + '.fasta'))
-
-    sequences_to_compare = list()
-    for sequence_one in sequence_one_seqs:
-        for sequence_two in sequence_two_seqs:
-            sequences_to_compare.append([str(sequence_one), str(sequence_two)])
-
-    p = multiprocessing.Pool(processes=args.threads)
-    identities = p.map(find_percent_identities, sequences_to_compare)
-    p.close()
-    p.join()
-    # Now do pairwise alignments between each sequence in group one and each sequence in group two.
-    # This will allow for us to know the percent ID distribution of everything.
-    # TODO: Write these result to file or something, so they can be visualized a bit later on.
-    with open(os.path.join(args.output_dir, 'distances.csv'), 'a+') as f:
-        f.write('{},{},{}\n'.format(args.group_one, args.group_two, str(sum(identities)/len(identities))))
-    print('Average percent ID ' + str(sum(identities)/len(identities)))
-    """
 
 
 def make_blast_db(fasta_file):
@@ -99,7 +77,7 @@ def make_blast_db(fasta_file):
 def extract_sequences(fasta_file):
     sequences = list()
     for sequence in SeqIO.parse(fasta_file, 'fasta'):
-        sequences.append(str(sequence.seq))
+        sequences.append(sequence)
     return sequences
 
 
@@ -113,16 +91,31 @@ def find_percent_identities(sequences):
     return percent_id
 
 
+class BlastResult:
+    def __init__(self, percent_id, query_name, subject_name):
+        self.percent_id = percent_id
+        self.query_name = query_name
+        self.subject_name = subject_name
+
+
 def blast_sequence(sequence, database):
+    # BLAST a (16S) sequence against a database of 16S sequence from another genus.
     blastn = NcbiblastnCommandline(db=database, outfmt=5, max_target_seqs=100000)  # By default, only get top 500 matches. Change to ridiculous level
-    stdout, stderr = blastn(stdin=sequence)
+    stdout, stderr = blastn(stdin=str(sequence.seq))
     percent_identities = list()
     if stdout:
         for record in NCBIXML.parse(StringIO(stdout)):
             for alignment in record.alignments:
                 for hsp in alignment.hsps:
-                    if hsp.align_length >= 0.9 * len(sequence):
-                        percent_identities.append(100 * hsp.identities/len(sequence))
+                    if hsp.align_length >= 0.9 * len(sequence.seq):
+                        percent_id = 100 * hsp.identities/len(sequence.seq)
+                        subject_name = alignment.title
+                        query_name = sequence.description
+                        blast_result = BlastResult(percent_id=percent_id,
+                                                   subject_name=subject_name,
+                                                   query_name=query_name)
+                        # percent_identities.append(100 * hsp.identities/len(sequence)
+                        percent_identities.append(blast_result)
     return percent_identities
 
 
